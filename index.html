@@ -1,0 +1,892 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Arquitectura del computador</title>
+<!-- Fuentes: Big Shoulders Display (títulos), IBM Plex Sans (texto), IBM Plex Mono (etiquetas tipo serigrafía) -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@700;800;900&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* ===========================================
+   TEMA «PLACA DE CIRCUITO»
+   Cambia estas variables para cambiar todo el aspecto
+   =========================================== */
+:root {
+    --stage-bg: #050d09;      /* fuera del lienzo 16:9 */
+    --slide-bg: #0c2018;      /* máscara de soldadura (verde PCB) */
+    --mask: #0c2018;
+    --mask-light: #133323;
+    --chip: #141414;          /* encapsulado negro de los chips */
+    --copper: #e0954f;        /* pistas de cobre (acento principal) */
+    --copper-soft: rgba(224, 149, 79, .16);
+    --silk: #f1efe6;          /* serigrafía blanca (texto principal) */
+    --dim: #8fb39e;           /* serigrafía tenue (texto secundario) */
+    --data: #7cc6ff;          /* bus de datos */
+    --addr: #e0954f;          /* bus de direcciones */
+    --ctrl: #ff6b6b;          /* bus de control */
+
+    --font-display: 'Big Shoulders Display', sans-serif;
+    --font-body: 'IBM Plex Sans', sans-serif;
+    --font-mono: 'IBM Plex Mono', monospace;
+
+    --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+/* ===========================================
+   FIXED 16:9 STAGE: MANDATORY BASE STYLES
+   (contenido completo de viewport-base.css)
+   =========================================== */
+html,
+body {
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    overflow: hidden;
+    background: var(--stage-bg, #000);
+}
+.deck-viewport {
+    position: fixed;
+    inset: 0;
+    overflow: hidden;
+    background: var(--stage-bg, #000);
+}
+.deck-stage {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 1920px;
+    height: 1080px;
+    overflow: hidden;
+    transform-origin: 0 0;
+    background: var(--slide-bg, #fff);
+}
+.slide {
+    position: absolute;
+    inset: 0;
+    width: 1920px;
+    height: 1080px;
+    overflow: hidden;
+    display: block;
+    visibility: hidden;
+    opacity: 0;
+    pointer-events: none;
+    background: var(--slide-bg, #fff);
+}
+.slide.active,
+.slide.visible {
+    visibility: visible;
+    opacity: 1;
+    pointer-events: auto;
+    z-index: 1;
+}
+img,
+video,
+canvas,
+svg {
+    max-width: 100%;
+    max-height: 100%;
+}
+.deck-controls {
+    position: fixed;
+    left: 50%;
+    bottom: 22px;
+    transform: translateX(-50%);
+    z-index: 1000;
+}
+@media print {
+    html,
+    body {
+        width: 1920px;
+        height: auto;
+        overflow: visible;
+        background: #fff;
+    }
+    .deck-viewport {
+        position: static;
+        overflow: visible;
+        background: #fff;
+    }
+    .deck-stage {
+        position: static;
+        width: auto;
+        height: auto;
+        transform: none !important;
+        background: none;
+    }
+    .slide {
+        position: relative;
+        display: block !important;
+        visibility: visible !important;
+        opacity: 1 !important;
+        pointer-events: auto !important;
+        width: 1920px;
+        height: 1080px;
+        break-after: page;
+        page-break-after: always;
+    }
+    .slide:last-child {
+        break-after: auto;
+        page-break-after: auto;
+    }
+    .deck-controls {
+        display: none !important;
+    }
+}
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.01ms !important;
+        transition-duration: 0.2s !important;
+    }
+}
+
+/* ===========================================
+   FONDO DE PLACA: degradado + rejilla de puntos
+   =========================================== */
+.slide {
+    background: radial-gradient(ellipse at 30% 35%, var(--mask-light), var(--mask) 70%);
+    color: var(--silk);
+    font-family: var(--font-body);
+}
+.slide::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background-image: radial-gradient(rgba(241, 239, 230, .07) 1.5px, transparent 1.5px);
+    background-size: 32px 32px;
+    pointer-events: none;
+}
+
+/* ===========================================
+   CROMO DE CADA DIAPOSITIVA
+   .ref = referencia de componente (arriba izq.)
+   .pg  = número de página (lo rellena JS)
+   .who = quién presenta (abajo izq.)
+   =========================================== */
+.ref, .pg, .who, .credit, .kicker {
+    font-family: var(--font-mono);
+    letter-spacing: .14em;
+    text-transform: uppercase;
+}
+.ref { position: absolute; left: 120px; top: 64px; font-size: 22px; color: var(--dim); font-weight: 500; }
+.pg  { position: absolute; right: 120px; top: 64px; font-size: 22px; color: var(--dim); font-weight: 500; }
+.who { position: absolute; left: 120px; bottom: 56px; font-size: 22px; color: var(--silk); font-weight: 500; }
+.who b { color: var(--copper); font-weight: 600; }
+.credit { position: absolute; right: 120px; bottom: 58px; font-size: 15px; letter-spacing: .04em; text-transform: none; color: var(--dim); max-width: 940px; text-align: right; }
+
+/* ===========================================
+   TIPOGRAFÍA
+   =========================================== */
+.kicker { font-size: 24px; color: var(--copper); font-weight: 600; }
+h2.title {
+    font-family: var(--font-display);
+    font-weight: 900;
+    font-size: 112px;
+    line-height: .92;
+    text-transform: uppercase;
+    letter-spacing: .005em;
+}
+h3 {
+    font-family: var(--font-display);
+    font-weight: 800;
+    font-size: 48px;
+    line-height: 1;
+    text-transform: uppercase;
+    letter-spacing: .02em;
+}
+.body { font-size: 32px; line-height: 1.4; }
+.body b, .hl { color: var(--copper); font-weight: 600; }
+.mono { font-family: var(--font-mono); }
+
+/* Bloque de contenido estándar */
+.content { position: absolute; left: 120px; right: 120px; top: 140px; bottom: 130px; }
+
+/* ===========================================
+   COMPONENTES
+   .pad   = tarjeta con borde de cobre
+   .ic    = chip negro con patas (pines)
+   .photo = fotografía real con marco
+   =========================================== */
+.pad {
+    border: 3px solid var(--copper);
+    border-radius: 14px;
+    background: rgba(0, 0, 0, .28);
+    padding: 34px 38px;
+}
+.ic {
+    position: relative;
+    background: var(--chip);
+    border-radius: 10px;
+    padding: 40px 44px;
+    box-shadow: 0 24px 50px rgba(0, 0, 0, .45);
+}
+.ic::before, .ic::after {
+    content: "";
+    position: absolute;
+    left: 30px; right: 30px;
+    height: 18px;
+    background: repeating-linear-gradient(to right, #c9c9c9 0 16px, transparent 16px 40px);
+}
+.ic::before { top: -18px; }
+.ic::after  { bottom: -18px; }
+.photo {
+    position: relative;
+    border-radius: 12px;
+    overflow: hidden;
+    border: 3px solid rgba(241, 239, 230, .85);
+    box-shadow: 0 24px 50px rgba(0, 0, 0, .5);
+    background: #000;
+}
+.photo img { display: block; width: 100%; height: 100%; object-fit: cover; max-width: none; max-height: none; }
+.photo .tag {
+    position: absolute; left: 0; bottom: 0;
+    background: var(--chip); color: var(--silk);
+    font: 500 20px var(--font-mono); letter-spacing: .08em;
+    padding: 8px 16px; border-top-right-radius: 10px;
+}
+
+/* Tablas comparativas */
+table.cmp { width: 100%; border-collapse: collapse; font-size: 28px; }
+table.cmp th, table.cmp td { padding: 16px 22px; text-align: left; border-bottom: 2px solid rgba(241, 239, 230, .14); vertical-align: top; }
+table.cmp th { font: 600 22px var(--font-mono); letter-spacing: .12em; text-transform: uppercase; color: var(--dim); }
+table.cmp th.a, table.cmp td.a { color: var(--silk); }
+table.cmp thead th:nth-child(2), table.cmp thead th:nth-child(3) { color: var(--copper); font-size: 26px; }
+table.cmp td:first-child { font: 500 22px var(--font-mono); color: var(--dim); letter-spacing: .06em; text-transform: uppercase; width: 25%; }
+
+/* Diagramas SVG */
+svg.dia text { font-family: var(--font-mono); fill: var(--silk); }
+svg.dia .box { fill: var(--chip); stroke: var(--silk); stroke-width: 3; }
+svg.dia .sub { fill: rgba(224, 149, 79, .14); stroke: var(--copper); stroke-width: 2.5; }
+svg.dia .bus { fill: none; stroke: var(--copper); stroke-width: 12; stroke-linecap: round; }
+svg.dia .flow { fill: none; stroke: var(--silk); stroke-width: 4; stroke-dasharray: 14 18; stroke-linecap: round; animation: flow 1.2s linear infinite; }
+@keyframes flow { to { stroke-dashoffset: -64; } }
+
+/* Pistas de cobre decorativas (se dibujan al entrar) */
+svg.traces { position: absolute; inset: 0; width: 1920px; height: 1080px; pointer-events: none; }
+svg.traces path { fill: none; stroke: var(--copper); stroke-width: 6; stroke-linecap: round; opacity: .8; stroke-dasharray: 1700; stroke-dashoffset: 1700; }
+svg.traces circle { fill: var(--mask); stroke: var(--copper); stroke-width: 6; opacity: 0; }
+.slide.visible svg.traces path { animation: draw 2s ease-out forwards; }
+.slide.visible svg.traces circle { animation: fade .4s 1.6s forwards; }
+@keyframes draw { to { stroke-dashoffset: 0; } }
+@keyframes fade { to { opacity: 1; } }
+
+/* ===========================================
+   ANIMACIONES DE ENTRADA
+   Se activan cuando la diapositiva recibe .visible
+   =========================================== */
+.reveal { opacity: 0; transform: translateY(30px); transition: opacity .7s var(--ease-out-expo), transform .7s var(--ease-out-expo); }
+.slide.visible .reveal { opacity: 1; transform: none; }
+.d1 { transition-delay: .10s; } .d2 { transition-delay: .25s; } .d3 { transition-delay: .40s; }
+.d4 { transition-delay: .55s; } .d5 { transition-delay: .70s; } .d6 { transition-delay: .85s; }
+
+/* ===========================================
+   01 · PORTADA
+   =========================================== */
+.cover .chipbig { position: absolute; left: 180px; top: 250px; width: 1180px; height: 560px; }
+.cover h1 { position: absolute; left: 250px; top: 345px; font: 900 150px/.92 var(--font-display); text-transform: uppercase; letter-spacing: .01em; }
+.cover .u1 { position: absolute; left: 250px; top: 300px; font: 500 22px var(--font-mono); color: var(--dim); letter-spacing: .15em; }
+.cover .sub { position: absolute; left: 250px; top: 685px; font: 500 30px var(--font-mono); color: var(--copper); }
+.cover .course { position: absolute; left: 180px; top: 64px; font: 500 22px var(--font-mono); letter-spacing: .14em; text-transform: uppercase; color: var(--dim); }
+
+/* ===========================================
+   02 · AGENDA (cuatro chips sobre un bus)
+   =========================================== */
+.agenda-bus { position: absolute; left: 120px; right: 120px; top: 820px; height: 12px; background: var(--copper); border-radius: 6px; }
+.agenda { position: absolute; left: 120px; right: 120px; top: 480px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 40px; }
+.agenda .ic { height: 290px; padding: 34px 32px; }
+.agenda .n { font: 900 64px/1 var(--font-display); color: var(--copper); }
+.agenda .t { font: 600 30px/1.2 var(--font-body); margin-top: 14px; }
+.agenda .p { position: absolute; left: 32px; right: 28px; bottom: 26px; font: 500 17px/1.3 var(--font-mono); letter-spacing: .06em; text-transform: uppercase; color: var(--dim); }
+.agenda .leg { position: absolute; left: 50%; top: 308px; width: 8px; height: 50px; background: var(--copper); transform: translateX(-50%); }
+
+/* ===========================================
+   CICLO DE INSTRUCCIÓN: resaltado secuencial
+   =========================================== */
+.cycle { display: grid; grid-template-columns: 1fr 90px 1fr 90px 1fr; align-items: stretch; }
+.cycle .pad { min-height: 360px; }
+.cycle .arrow { align-self: center; justify-self: center; font: 600 64px var(--font-mono); color: var(--copper); }
+.slide.visible .cycle .pad { animation: pulse 6s infinite; }
+.slide.visible .cycle .pad:nth-child(3) { animation-delay: 2s; }
+.slide.visible .cycle .pad:nth-child(5) { animation-delay: 4s; }
+@keyframes pulse {
+    0%, 30% { background: rgba(224, 149, 79, .22); box-shadow: 0 0 40px rgba(224, 149, 79, .35); }
+    34%, 100% { background: rgba(0, 0, 0, .28); box-shadow: none; }
+}
+.cycle .step { font: 600 24px var(--font-mono); letter-spacing: .14em; color: var(--copper); }
+.cycle h3 { margin: 12px 0 22px; font-size: 64px; }
+
+/* Ejemplo paso a paso */
+.steps { display: grid; grid-template-columns: 70px 1fr; row-gap: 22px; column-gap: 24px; align-items: center; }
+.steps .k { width: 64px; height: 64px; border-radius: 50%; border: 3px solid var(--copper); display: grid; place-items: center; font: 600 28px var(--font-mono); color: var(--copper); }
+.steps .v { font-size: 30px; line-height: 1.3; }
+.code { font: 500 30px/1.5 var(--font-mono); background: var(--chip); border-left: 6px solid var(--copper); padding: 22px 28px; border-radius: 8px; white-space: pre; }
+.code .c { color: var(--dim); }
+
+/* Bibliografía */
+.refs { font-size: 23px; line-height: 1.4; column-count: 2; column-gap: 70px; }
+.refs p { break-inside: avoid; margin-bottom: 16px; padding-left: 28px; text-indent: -28px; }
+.refs a { color: var(--copper); text-decoration: none; word-break: break-all; }
+.refs a:hover { text-decoration: underline; }
+
+/* ===========================================
+   BARRA DE PROGRESO Y EDICIÓN (fuera del lienzo)
+   =========================================== */
+.progress { position: fixed; left: 0; bottom: 0; height: 4px; background: var(--copper); z-index: 1000; transition: width .4s var(--ease-out-expo); }
+.edit-hotzone { position: fixed; top: 0; left: 0; width: 80px; height: 80px; z-index: 10000; cursor: pointer; }
+.edit-toggle { position: fixed; top: 16px; left: 16px; z-index: 10001; width: 48px; height: 48px; border-radius: 50%; border: 2px solid var(--copper); background: var(--chip); color: var(--silk); font-size: 22px; cursor: pointer; opacity: 0; pointer-events: none; transition: opacity .3s ease; }
+.edit-toggle.show, .edit-toggle.active { opacity: 1; pointer-events: auto; }
+.edit-toggle.active { background: var(--copper); }
+body.editing [data-edit] { outline: 2px dashed rgba(224, 149, 79, .6); outline-offset: 4px; }
+</style>
+</head>
+<body>
+<div class="deck-viewport">
+<main class="deck-stage" id="deckStage">
+
+<!-- =====================================================
+     01 · PORTADA — Presenta: Buitrago Rios Juan Pablo
+     ===================================================== -->
+<section class="slide cover" data-who="Buitrago Rios Juan Pablo">
+    <svg class="traces" viewBox="0 0 1920 1080" aria-hidden="true">
+        <path d="M1360 330 H1520 L1600 250 H1920"/><path d="M1360 450 H1640 L1720 530 V1080"/>
+        <path d="M1360 570 H1500 L1580 650 H1920"/><path d="M1360 690 H1460 L1540 770 V900 H1920"/>
+        <path d="M500 838 V900 L560 960 H900"/><path d="M900 222 V150 L980 70 H1920"/>
+        <circle cx="1600" cy="250" r="14"/><circle cx="1720" cy="530" r="14"/><circle cx="900" cy="960" r="14"/><circle cx="980" cy="70" r="14"/>
+    </svg>
+    <div class="course">Arquitectura de computadoras · 2026</div>
+    <div class="ic chipbig reveal d1"></div>
+    <div class="u1 reveal d2">U1 · CPU-2026</div>
+    <h1 class="reveal d2" data-edit>Arquitectura<br>del computador</h1>
+    <div class="sub reveal d3">// fetch → decode → execute</div>
+    <div class="who"><b>Equipo</b>&nbsp; Buitrago Rios Juan Pablo · Guardia Canche Maria Alexandra <br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Chay May David Osvaldo · Pech Manrique Argel Jesus</div>
+    <div class="pg"></div>
+</section>
+
+<!-- =====================================================
+     02 · AGENDA — Presenta: Buitrago Rios Juan Pablo
+     ===================================================== -->
+<section class="slide" data-who="Buitrago Rios Juan Pablo">
+    <div class="ref">Mapa de la placa</div><div class="pg"></div>
+    <div class="content">
+        <div class="kicker reveal d1">Agenda</div>
+        <h2 class="title reveal d1" style="margin-top:14px" data-edit>Un recorrido<br>por la máquina</h2>
+    </div>
+    <div class="agenda-bus reveal d2"></div>
+    <div class="agenda">
+        <div class="ic reveal d2"><div class="n">01</div><div class="t" data-edit>Introducción · von Neumann vs. Harvard</div><div class="p">Buitrago Rios Juan Pablo</div><span class="leg"></span></div>
+        <div class="ic reveal d3"><div class="n">02</div><div class="t" data-edit>La CPU y el ciclo de instrucción</div><div class="p">Guardia Canche Maria Alexandra</div><span class="leg"></span></div>
+        <div class="ic reveal d4"><div class="n">03</div><div class="t" data-edit>ISA: CISC vs. RISC</div><div class="p">Chay May David Osvaldo</div><span class="leg"></span></div>
+        <div class="ic reveal d5"><div class="n">04</div><div class="t" data-edit>Memoria y buses</div><div class="p">Pech Manrique Argel Jesus</div><span class="leg"></span></div>
+    </div>
+    <div class="who">Presenta · <b>Buitrago Rios Juan Pablo</b></div>
+</section>
+
+<!-- =====================================================
+     03 · ¿QUÉ ES LA ARQUITECTURA DEL COMPUTADOR?
+     ===================================================== -->
+<section class="slide" data-who="Buitrago Rios Juan Pablo">
+    <div class="ref">01 · Introducción</div><div class="pg"></div>
+    <div class="content">
+        <div class="kicker reveal d1">¿Qué es?</div>
+        <h2 class="title reveal d1" style="margin-top:14px;max-width:1500px" data-edit>Lo que el programador<br>ve de la máquina</h2>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:48px;margin-top:64px">
+            <div class="pad reveal d2">
+                <h3>Arquitectura</h3>
+                <p class="body" style="margin-top:18px" data-edit><b>Qué</b> hace: instrucciones, tipos de datos, direccionamiento, E/S.</p>
+            </div>
+            <div class="pad reveal d3" style="border-color:var(--dim)">
+                <h3 style="color:var(--dim)">Organización</h3>
+                <p class="body" style="margin-top:18px" data-edit><b>Cómo</b> lo hace: circuitos, señales de control, tecnología de memoria.</p>
+            </div>
+        </div>
+        <p class="body reveal d4" style="margin-top:40px;color:var(--dim)" data-edit>Analogía: el <span class="hl">plano</span> de una casa vs. los <span class="hl">materiales</span> con que se construye.</p>
+    </div>
+    <div class="who">Presenta · <b>Buitrago Rios Juan Pablo</b></div>
+</section>
+
+<!-- =====================================================
+     04 · MODELO VON NEUMANN
+     ===================================================== -->
+<section class="slide" data-who="Buitrago Rios Juan Pablo">
+    <div class="ref">02 · Modelos de arquitectura</div><div class="pg"></div>
+    <div class="content">
+        <div class="kicker reveal d1">1945 · EDVAC</div>
+        <h2 class="title reveal d1" style="margin-top:14px" data-edit>Von Neumann</h2>
+        <svg class="dia reveal d2" viewBox="0 0 1040 560" style="position:absolute;left:0;top:200px;width:1040px;height:560px" role="img" aria-label="Diagrama von Neumann: CPU y una sola memoria unidas por un único bus">
+            <rect class="box" x="10" y="20" width="360" height="300" rx="10"/>
+            <text x="190" y="70" text-anchor="middle" font-size="30" font-weight="600">CPU</text>
+            <rect class="sub" x="40" y="100" width="140" height="90" rx="6"/><text x="110" y="155" text-anchor="middle" font-size="28">UC</text>
+            <rect class="sub" x="200" y="100" width="140" height="90" rx="6"/><text x="270" y="155" text-anchor="middle" font-size="28">ALU</text>
+            <rect class="sub" x="40" y="210" width="300" height="80" rx="6"/><text x="190" y="260" text-anchor="middle" font-size="26">Registros</text>
+            <rect class="box" x="670" y="20" width="360" height="300" rx="10"/>
+            <text x="850" y="70" text-anchor="middle" font-size="30" font-weight="600">MEMORIA</text>
+            <rect class="sub" x="700" y="100" width="300" height="90" rx="6"/><text x="850" y="155" text-anchor="middle" font-size="26">Instrucciones</text>
+            <rect class="sub" x="700" y="210" width="300" height="80" rx="6"/><text x="850" y="260" text-anchor="middle" font-size="26">Datos</text>
+            <path class="bus" d="M370 170 H670"/><path class="flow" d="M380 170 H660"/>
+            <path class="bus" d="M520 170 V430"/>
+            <rect class="box" x="380" y="430" width="280" height="100" rx="10"/><text x="520" y="492" text-anchor="middle" font-size="28">E/S</text>
+            <text x="520" y="140" text-anchor="middle" font-size="24" style="fill:var(--copper)">UN SOLO BUS</text>
+        </svg>
+        <div style="position:absolute;left:1120px;top:40px;width:560px">
+            <div class="photo reveal d3" style="height:420px"><img src="assets/img/vonneumann.gif" alt="Retrato de John von Neumann"><span class="tag">John von Neumann</span></div>
+            <p class="body reveal d4" style="margin-top:34px" data-edit><b>Programa almacenado:</b> datos e instrucciones en la <b>misma</b> memoria.</p>
+            <p class="body reveal d5" style="margin-top:18px" data-edit>Problema: un solo bus → <b>cuello de botella</b>.</p>
+        </div>
+    </div>
+    <div class="who">Presenta · <b>Buitrago Rios Juan Pablo</b></div>
+    <div class="credit">Foto: Los Alamos National Laboratory (LANL), Wikimedia Commons, uso con atribución.</div>
+</section>
+
+<!-- =====================================================
+     05 · MODELO HARVARD
+     ===================================================== -->
+<section class="slide" data-who="Buitrago Rios Juan Pablo">
+    <div class="ref">02 · Modelos de arquitectura</div><div class="pg"></div>
+    <div class="content">
+        <div class="kicker reveal d1">1944 · Harvard Mark I</div>
+        <h2 class="title reveal d1" style="margin-top:14px" data-edit>Harvard</h2>
+        <svg class="dia reveal d2" viewBox="0 0 1040 460" style="position:absolute;left:0;top:230px;width:1040px;height:460px" role="img" aria-label="Diagrama Harvard: CPU con dos memorias y dos buses separados">
+            <rect class="box" x="10" y="60" width="290" height="240" rx="10"/>
+            <text x="155" y="160" text-anchor="middle" font-size="27" font-weight="600">MEMORIA DE</text>
+            <text x="155" y="200" text-anchor="middle" font-size="27" font-weight="600">INSTRUCCIONES</text>
+            <rect class="box" x="375" y="40" width="290" height="280" rx="10"/>
+            <text x="520" y="100" text-anchor="middle" font-size="30" font-weight="600">CPU</text>
+            <rect class="sub" x="400" y="130" width="110" height="80" rx="6"/><text x="455" y="180" text-anchor="middle" font-size="26">UC</text>
+            <rect class="sub" x="530" y="130" width="110" height="80" rx="6"/><text x="585" y="180" text-anchor="middle" font-size="26">ALU</text>
+            <rect class="sub" x="400" y="225" width="240" height="70" rx="6"/><text x="520" y="270" text-anchor="middle" font-size="24">Registros</text>
+            <rect class="box" x="740" y="60" width="290" height="240" rx="10"/>
+            <text x="885" y="160" text-anchor="middle" font-size="27" font-weight="600">MEMORIA DE</text>
+            <text x="885" y="200" text-anchor="middle" font-size="27" font-weight="600">DATOS</text>
+            <path class="bus" d="M300 180 H375"/><path class="bus" d="M665 180 H740"/>
+            <path class="flow" d="M305 180 H370"/><path class="flow" d="M735 180 H670"/>
+            <path class="bus" d="M337 180 V360" style="stroke-width:4;stroke-dasharray:6 8"/>
+            <path class="bus" d="M702 180 V360" style="stroke-width:4;stroke-dasharray:6 8"/>
+            <text x="337" y="392" text-anchor="middle" font-size="22" style="fill:var(--copper)">BUS INSTRUCCIONES</text>
+            <text x="702" y="392" text-anchor="middle" font-size="22" style="fill:var(--copper)">BUS DATOS</text>
+            <text x="520" y="445" text-anchor="middle" font-size="26">instrucción + dato a la vez</text>
+        </svg>
+        <div style="position:absolute;left:1120px;top:40px;width:560px">
+            <div class="photo reveal d3" style="height:400px"><img src="assets/img/harvard-mark1.jpg" alt="Computadora Harvard Mark I en exhibición"><span class="tag">Harvard Mark I</span></div>
+            <p class="body reveal d4" style="margin-top:34px" data-edit>Memorias y buses <b>separados</b> para instrucciones y datos.</p>
+            <p class="body reveal d5" style="margin-top:18px" data-edit>Más rápido, pero más <b>complejo</b> y costoso.</p>
+        </div>
+    </div>
+    <div class="who">Presenta · <b>Buitrago Rios Juan Pablo</b></div>
+    <div class="credit">Foto: Daderot, «Harvard Mark I Computer – Right Segment», Wikimedia Commons, CC BY-SA 3.0.</div>
+</section>
+
+<!-- =====================================================
+     06 · LA CPU: UC, ALU Y REGISTROS — Presenta: Guardia Canche Maria Alexandra
+     ===================================================== -->
+<section class="slide" data-who="Guardia Canche Maria Alexandra">
+    <div class="ref">03 · La CPU</div><div class="pg"></div>
+    <div class="content">
+        <div class="kicker reveal d1">El cerebro</div>
+        <h2 class="title reveal d1" style="margin-top:14px" data-edit>Dentro de la CPU</h2>
+        <div style="position:absolute;left:0;top:215px;width:1020px;display:grid;gap:20px">
+            <div class="pad reveal d2" style="padding:24px 34px"><h3>UC · Unidad de control</h3><p class="body" style="margin-top:8px" data-edit>Dirige: lee la instrucción y da las órdenes.</p></div>
+            <div class="pad reveal d3" style="padding:24px 34px"><h3>ALU · Unidad aritmético-lógica</h3><p class="body" style="margin-top:8px" data-edit>Calcula: suma, resta, AND, OR, compara.</p></div>
+            <div class="pad reveal d4" style="padding:24px 34px"><h3>Registros</h3><p class="body" style="margin-top:8px" data-edit><span class="mono hl">PC</span> siguiente · <span class="mono hl">IR</span> actual · <span class="mono hl">MAR/MDR</span> dirección y dato</p></div>
+        </div>
+        <div class="photo reveal d3" style="position:absolute;left:1100px;top:120px;width:580px;height:640px"><img src="assets/img/intel4004.jpg" alt="Plano del chip Intel 4004 de 1971"><span class="tag">Intel 4004 · 1971</span></div>
+    </div>
+    <div class="who">Presenta · <b>Guardia Canche Maria Alexandra</b></div>
+    <div class="credit">Imagen: Wolfgang Stief, «Intel 4004 Chip Layout», Wikimedia Commons, CC0.</div>
+</section>
+
+<!-- =====================================================
+     07 · CICLO FETCH-DECODE-EXECUTE
+     ===================================================== -->
+<section class="slide" data-who="Guardia Canche Maria Alexandra">
+    <div class="ref">03 · La CPU</div><div class="pg"></div>
+    <div class="content">
+        <div class="kicker reveal d1">Se repite miles de millones de veces por segundo</div>
+        <h2 class="title reveal d1" style="margin-top:14px" data-edit>Ciclo de instrucción</h2>
+        <div class="cycle reveal d2" style="margin-top:70px">
+            <div class="pad"><div class="step">Paso 1</div><h3>Fetch</h3><p class="body" data-edit>Busca la instrucción en memoria usando el <span class="mono hl">PC</span>.</p></div>
+            <div class="arrow">→</div>
+            <div class="pad"><div class="step">Paso 2</div><h3>Decode</h3><p class="body" data-edit>La <b>UC</b> interpreta qué operación es.</p></div>
+            <div class="arrow">→</div>
+            <div class="pad"><div class="step">Paso 3</div><h3>Execute</h3><p class="body" data-edit>La <b>ALU</b> opera y se guarda el resultado.</p></div>
+        </div>
+        <p class="mono reveal d3" style="margin-top:40px;font-size:26px;color:var(--dim);text-align:center">↺ &nbsp;y vuelve a empezar con PC + 1</p>
+    </div>
+    <div class="who">Presenta · <b>Guardia Canche Maria Alexandra</b></div>
+</section>
+
+<!-- =====================================================
+     08 · EJEMPLO PASO A PASO: ADD R1, R2, R3
+     ===================================================== -->
+<section class="slide" data-who="Guardia Canche Maria Alexandra">
+    <div class="ref">03 · La CPU</div><div class="pg"></div>
+    <div class="content">
+        <div class="kicker reveal d1">Ejemplo</div>
+        <h2 class="title reveal d1" style="margin-top:14px" data-edit>Sumar 5 + 7</h2>
+        <div class="code reveal d2" style="position:absolute;left:0;top:230px;width:640px">ADD R1, R2, R3
+<span class="c">; R1 ← R2 + R3</span>
+<span class="c">; R2 = 5, R3 = 7</span></div>
+        <div class="ic reveal d4" style="position:absolute;left:0;top:500px;width:640px;padding:34px 40px">
+            <div class="mono" style="font-size:20px;letter-spacing:.14em;color:var(--dim)">REGISTROS AL FINAL</div>
+            <div class="mono" style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-top:16px;font-size:26px;text-align:center">
+                <div>PC<br><span class="hl">101</span></div><div>IR<br><span class="hl">ADD</span></div><div>R1<br><span class="hl">12</span></div><div>R2<br>5</div><div>R3<br>7</div>
+            </div>
+        </div>
+        <div class="steps" style="position:absolute;left:740px;top:220px;width:940px">
+            <div class="k reveal d2">1</div><div class="v reveal d2" data-edit><b>Fetch:</b> PC = 100 → se lee la instrucción → IR. PC pasa a 101.</div>
+            <div class="k reveal d3">2</div><div class="v reveal d3" data-edit><b>Decode:</b> la UC ve «ADD», fuentes R2 y R3, destino R1.</div>
+            <div class="k reveal d4">3</div><div class="v reveal d4" data-edit><b>Execute:</b> la ALU calcula 5 + 7 = 12.</div>
+            <div class="k reveal d5">4</div><div class="v reveal d5" data-edit><b>Guardar:</b> R1 ← 12. ¡Siguiente instrucción!</div>
+        </div>
+    </div>
+    <div class="who">Presenta · <b>Guardia Canche Maria Alexandra</b></div>
+</section>
+
+<!-- =====================================================
+     09 · ¿QUÉ ES UNA ISA? — Presenta: Chay May David Osvaldo
+     ===================================================== -->
+<section class="slide" data-who="Chay May David Osvaldo">
+    <div class="ref">04 · Conjunto de instrucciones</div><div class="pg"></div>
+    <div class="content">
+        <div class="kicker reveal d1">ISA · Instruction Set Architecture</div>
+        <h2 class="title reveal d1" style="margin-top:14px" data-edit>El contrato<br>software ↔ hardware</h2>
+        <div style="position:absolute;left:0;top:360px;width:1000px;display:grid;gap:18px">
+            <div class="pad reveal d2" style="border-color:var(--dim)"><p class="body" data-edit><b>Software</b> · programas y compilador</p></div>
+            <div class="pad reveal d3" style="background:var(--copper-soft);border-width:5px"><p class="body" style="font-size:34px" data-edit><b>ISA</b> · instrucciones, registros, tipos de datos, modos de direccionamiento</p></div>
+            <div class="pad reveal d4" style="border-color:var(--dim)"><p class="body" data-edit><b>Hardware</b> · el chip que la implementa</p></div>
+        </div>
+        <div class="pad reveal d5" style="position:absolute;left:1100px;top:360px;width:580px;min-height:330px">
+            <h3>Dato clave</h3>
+            <p class="body" style="margin-top:18px" data-edit>Intel y AMD fabrican chips <b>distintos</b> con la <b>misma</b> ISA (x86-64): por eso corren los mismos programas.</p>
+        </div>
+    </div>
+    <div class="who">Presenta · <b>Chay May David Osvaldo</b></div>
+</section>
+
+<!-- =====================================================
+     10 · CISC VS. RISC
+     ===================================================== -->
+<section class="slide" data-who="Chay May David Osvaldo">
+    <div class="ref">04 · Conjunto de instrucciones</div><div class="pg"></div>
+    <div class="content">
+        <div class="kicker reveal d1">Dos filosofías</div>
+        <h2 class="title reveal d1" style="margin-top:14px" data-edit>CISC vs. RISC</h2>
+        <table class="cmp reveal d2" style="position:absolute;left:0;top:210px;width:1040px">
+            <thead><tr><th></th><th>CISC · complejo</th><th>RISC · reducido</th></tr></thead>
+            <tbody>
+                <tr><td>Instrucciones</td><td data-edit>Muchas y potentes</td><td data-edit>Pocas y simples</td></tr>
+                <tr><td>Longitud</td><td data-edit>Variable</td><td data-edit>Fija</td></tr>
+                <tr><td>Ciclos</td><td data-edit>Varios por instrucción</td><td data-edit>≈ 1 (segmentación)</td></tr>
+                <tr><td>Memoria</td><td data-edit>Casi cualquier instrucción</td><td data-edit>Solo LOAD / STORE</td></tr>
+                <tr><td>Registros</td><td data-edit>Pocos</td><td data-edit>Muchos (32)</td></tr>
+            </tbody>
+        </table>
+        <div style="position:absolute;left:1120px;top:210px;width:560px">
+            <div class="mono reveal d3" style="font-size:22px;color:var(--dim);letter-spacing:.12em">CISC · x86</div>
+            <div class="code reveal d3" style="margin-top:10px;font-size:28px">add eax, [x]</div>
+            <div class="mono reveal d4" style="font-size:22px;color:var(--dim);letter-spacing:.12em;margin-top:36px">RISC · RISC-V</div>
+            <div class="code reveal d4" style="margin-top:10px;font-size:28px">lw  t1, 0(a0)
+add t0, t0, t1</div>
+            <p class="body reveal d5" style="margin-top:30px;font-size:28px" data-edit>Misma suma: <b>1</b> instrucción compleja vs. <b>2</b> simples.</p>
+        </div>
+    </div>
+    <div class="who">Presenta · <b>Chay May David Osvaldo</b></div>
+</section>
+
+<!-- =====================================================
+     11 · EN EL MUNDO REAL
+     ===================================================== -->
+<section class="slide" data-who="Chay May David Osvaldo">
+    <div class="ref">04 · Conjunto de instrucciones</div><div class="pg"></div>
+    <div class="content">
+        <div class="kicker reveal d1">¿Dónde están?</div>
+        <h2 class="title reveal d1" style="margin-top:14px" data-edit>En tu mochila</h2>
+        <div style="position:absolute;left:0;right:0;top:220px;display:grid;grid-template-columns:repeat(3,1fr);gap:44px">
+            <div class="reveal d2"><div class="photo" style="height:400px"><img src="assets/img/intel-i7.jpg" alt="Procesador Intel Core i7"><span class="tag">Intel Core i7</span></div>
+                <h3 style="margin-top:26px">x86 · CISC</h3><p class="body" style="font-size:28px;margin-top:8px" data-edit>Laptops y PC de escritorio.</p></div>
+            <div class="reveal d3"><div class="photo" style="height:400px"><img src="assets/img/apple-m1.jpg" alt="Chip Apple M1"><span class="tag">Apple M1</span></div>
+                <h3 style="margin-top:26px">ARM · RISC</h3><p class="body" style="font-size:28px;margin-top:8px" data-edit>Celulares, tablets y Mac.</p></div>
+            <div class="reveal d4"><div class="photo" style="height:400px"><img src="assets/img/hifive.png" alt="Placa SiFive HiFive1 con procesador RISC-V"><span class="tag">SiFive HiFive1</span></div>
+                <h3 style="margin-top:26px">RISC-V · abierta</h3><p class="body" style="font-size:28px;margin-top:8px" data-edit>ISA libre, sin licencias.</p></div>
+        </div>
+        <p class="body reveal d5" style="position:absolute;left:0;bottom:-10px;font-size:28px;color:var(--dim)" data-edit>Ojo: los x86 modernos traducen sus instrucciones a <span class="hl">micro-operaciones tipo RISC</span>.</p>
+    </div>
+    <div class="who">Presenta · <b>Chay May David Osvaldo</b></div>
+    <div class="credit" id="credit-12">Fotos (Wikimedia Commons): Ptrump16, CC BY 4.0 · Henriok, CC0 · G. Halfacree, CC BY-SA 2.0.</div>
+</section>
+
+<!-- =====================================================
+     12 · ¿Y HOY? COMPARACIÓN + HARVARD MODIFICADA — Presenta: Pech Manrique Argel Jesus
+     ===================================================== -->
+<section class="slide" data-who="Pech Manrique Argel Jesus">
+    <div class="ref">05 · Memoria</div><div class="pg"></div>
+    <div class="content">
+        <div class="kicker reveal d1">Von Neumann vs. Harvard</div>
+        <h2 class="title reveal d1" style="margin-top:14px" data-edit>Hoy: los dos</h2>
+        <table class="cmp reveal d2" style="position:absolute;left:0;top:220px;width:1060px">
+            <thead><tr><th></th><th>Von Neumann</th><th>Harvard</th></tr></thead>
+            <tbody>
+                <tr><td>Memoria</td><td data-edit>Una, compartida</td><td data-edit>Dos, separadas</td></tr>
+                <tr><td>Buses</td><td data-edit>Uno</td><td data-edit>Dos</td></tr>
+                <tr><td>Velocidad</td><td data-edit>Cuello de botella</td><td data-edit>Acceso simultáneo</td></tr>
+                <tr><td>Ejemplo</td><td data-edit>PC y laptops</td><td data-edit>Microcontroladores (Arduino)</td></tr>
+            </tbody>
+        </table>
+        <div class="pad reveal d4" style="position:absolute;left:0;top:640px;width:1060px">
+            <p class="body" data-edit><b>Harvard modificada:</b> la CPU de tu PC tiene caché L1 separada (instrucciones / datos) y una RAM común.</p>
+        </div>
+        <div class="photo reveal d3" style="position:absolute;left:1160px;top:220px;width:520px;height:520px"><img src="assets/img/atmega.jpg" alt="Microcontrolador ATmega328P"><span class="tag">ATmega328P · Harvard</span></div>
+    </div>
+    <div class="who">Presenta · <b>Pech Manrique Argel Jesus</b></div>
+    <div class="credit">Foto: Suyash Dwivedi, «Atmel ATMEGA328P-PU», Wikimedia Commons, CC BY-SA 4.0.</div>
+</section>
+
+<!-- =====================================================
+     13 · JERARQUÍA DE MEMORIA
+     ===================================================== -->
+<section class="slide" data-who="Pech Manrique Argel Jesus">
+    <div class="ref">05 · Memoria</div><div class="pg"></div>
+    <div class="content">
+        <div class="kicker reveal d1">Rápida y pequeña ↔ lenta y enorme</div>
+        <h2 class="title reveal d1" style="margin-top:14px" data-edit>Jerarquía de memoria</h2>
+        <svg class="dia reveal d2" viewBox="0 0 1100 600" style="position:absolute;left:0;top:200px;width:1100px;height:600px" role="img" aria-label="Pirámide de jerarquía de memoria">
+            <polygon points="420,10 580,10 640,130 360,130" fill="#e0954f"/>
+            <polygon points="352,145 648,145 708,275 292,275" fill="rgba(224,149,79,.7)"/>
+            <polygon points="284,290 716,290 776,420 224,420" fill="rgba(224,149,79,.45)"/>
+            <polygon points="216,435 784,435 850,570 150,570" fill="rgba(224,149,79,.25)"/>
+            <text x="500" y="82" text-anchor="middle" font-size="28" font-weight="600" style="fill:#141414">Registros</text>
+            <text x="500" y="222" text-anchor="middle" font-size="28" font-weight="600" style="fill:#141414">Caché L1·L2·L3</text>
+            <text x="500" y="367" text-anchor="middle" font-size="28" font-weight="600">RAM</text>
+            <text x="500" y="514" text-anchor="middle" font-size="28" font-weight="600">SSD / disco</text>
+            <text x="660" y="82" font-size="24" style="fill:var(--dim)">&lt; 1 ns · bytes</text>
+            <text x="728" y="222" font-size="24" style="fill:var(--dim)">≈ 1–10 ns · KB–MB</text>
+            <text x="796" y="367" font-size="24" style="fill:var(--dim)">≈ 100 ns · GB</text>
+            <text x="870" y="514" font-size="24" style="fill:var(--dim)">µs–ms · TB</text>
+            <path d="M60 560 V40" stroke="var(--silk)" stroke-width="4" marker-end="url(#ah)"/>
+            <defs><marker id="ah" markerWidth="12" markerHeight="12" refX="6" refY="6" orient="auto"><path d="M0,0 L12,6 L0,12 z" fill="#f1efe6"/></marker></defs>
+            <text x="40" y="300" font-size="22" transform="rotate(-90 40 300)" text-anchor="middle">más rápida y cara</text>
+        </svg>
+        <div style="position:absolute;left:1180px;top:200px;width:500px">
+            <div class="photo reveal d3" style="height:260px"><img src="assets/img/ram-ddr4.jpg" alt="Módulo de memoria RAM DDR4"><span class="tag">Módulo RAM DDR4</span></div>
+            <p class="body reveal d4" style="margin-top:34px" data-edit>La <b>caché</b> guarda copias de lo que la CPU usa más, para no esperar a la RAM.</p>
+        </div>
+    </div>
+    <div class="who">Presenta · <b>Pech Manrique Argel Jesus</b></div>
+    <div class="credit">Foto: ElooKoN, «RAM Module (SDRAM-DDR4)», Wikimedia Commons, CC BY-SA 4.0. Tiempos aproximados.</div>
+</section>
+
+<!-- =====================================================
+     14 · BUSES DEL SISTEMA
+     ===================================================== -->
+<section class="slide" data-who="Pech Manrique Argel Jesus">
+    <div class="ref">05 · Buses</div><div class="pg"></div>
+    <div class="content">
+        <div class="kicker reveal d1">Las carreteras de la placa</div>
+        <h2 class="title reveal d1" style="margin-top:14px" data-edit>Buses del sistema</h2>
+        <svg class="dia reveal d2" viewBox="0 0 1060 560" style="position:absolute;left:0;top:200px;width:1060px;height:560px" role="img" aria-label="CPU, memoria y E/S conectadas por los buses de datos, direcciones y control">
+            <rect class="box" x="20" y="20" width="260" height="130" rx="10"/><text x="150" y="98" text-anchor="middle" font-size="32" font-weight="600">CPU</text>
+            <rect class="box" x="400" y="20" width="260" height="130" rx="10"/><text x="530" y="98" text-anchor="middle" font-size="32" font-weight="600">MEMORIA</text>
+            <rect class="box" x="780" y="20" width="260" height="130" rx="10"/><text x="910" y="98" text-anchor="middle" font-size="32" font-weight="600">E/S</text>
+            <g stroke-width="12" stroke-linecap="round" fill="none">
+                <path d="M20 280 H1040" stroke="var(--data)"/><path d="M20 380 H1040" stroke="var(--addr)"/><path d="M20 480 H1040" stroke="var(--ctrl)"/>
+                <path d="M110 150 V280 M530 150 V280 M910 150 V280" stroke="var(--data)" stroke-width="8"/>
+                <path d="M150 150 V380 M570 150 V380 M950 150 V380" stroke="var(--addr)" stroke-width="8"/>
+                <path d="M190 150 V480 M610 150 V480 M990 150 V480" stroke="var(--ctrl)" stroke-width="8"/>
+            </g>
+            <g fill="#0f281d">
+                <rect x="218" y="236" width="320" height="36" rx="6"/>
+                <rect x="218" y="336" width="336" height="36" rx="6"/>
+                <rect x="218" y="436" width="482" height="36" rx="6"/>
+            </g>
+            <g font-size="24" font-weight="600">
+                <text x="230" y="262" style="fill:var(--data)">DATOS · ida y vuelta</text>
+                <text x="230" y="362" style="fill:var(--addr)">DIRECCIONES · ¿dónde?</text>
+                <text x="230" y="462" style="fill:var(--ctrl)">CONTROL · leer, escribir, reloj</text>
+            </g>
+        </svg>
+        <div style="position:absolute;left:1140px;top:200px;width:540px">
+            <div class="photo reveal d3" style="height:300px"><img src="assets/img/motherboard.jpg" alt="Placa base con sus componentes etiquetados"><span class="tag">Placa base</span></div>
+            <div class="pad reveal d4" style="margin-top:34px">
+                <p class="body" data-edit>Bus de direcciones de <b>32 bits</b> → 2³² = <b>4 GiB</b> direccionables.</p>
+            </div>
+        </div>
+    </div>
+    <div class="who">Presenta · <b>Pech Manrique Argel Jesus</b></div>
+    <div class="credit" id="credit-14">Foto: Appaloosa, «MSI KT3 Ultra ver 1.0 – labeled», Wikimedia Commons, CC BY-SA 3.0.</div>
+</section>
+
+<!-- =====================================================
+     15 · BIBLIOGRAFÍA (enlaces comprobados)
+     ===================================================== -->
+<section class="slide" data-who="">
+    <div class="ref">Referencias</div><div class="pg"></div>
+    <div class="content">
+        <h2 class="title reveal d1" style="font-size:96px" data-edit>Bibliografía</h2>
+        <div class="refs reveal d2" style="margin-top:40px">
+            <p>Calderón Mateos, A. (2016). WepSIM: Simulador modular e interactivo de un procesador elemental para facilitar una visión integrada de la microprogramación y la programación en ensamblador. <i>Enseñanza y Aprendizaje de Ingeniería de Computadores</i>. <a href="https://doi.org/10.30827/digibug.41909" target="_blank" rel="noopener">https://doi.org/10.30827/digibug.41909</a></p>
+            <p>Charte Ojeda, F. (2017). Uso de dispositivos FPGA como apoyo a la enseñanza de asignaturas de arquitectura de computadores. <i>Enseñanza y Aprendizaje de Ingeniería de Computadores</i>. <a href="https://doi.org/10.30827/digibug.47371" target="_blank" rel="noopener">https://doi.org/10.30827/digibug.47371</a></p>
+            <p>Encinas, D. O. (2026). <i>Modelización y simulación basada en agentes aplicada a la arquitectura de entrada/salida de los computadores paralelos</i> [Tesis, Universidad Nacional de La Plata]. <a href="https://doi.org/10.35537/10915/194710" target="_blank" rel="noopener">https://doi.org/10.35537/10915/194710</a></p>
+            <p>Granda Candás, J. C., López López, J. M., García Vázquez, M., Molleda Meré, J., Usamentiaga Fernández, R., Entrialgo Castaño, J. y de la Calle Herrero, F. J. (2019). <i>Arquitectura de computadores</i>. Universidad de Oviedo. <a href="https://hdl.handle.net/10651/74628" target="_blank" rel="noopener">https://hdl.handle.net/10651/74628</a></p>
+            <p>Herrera Buitrago, M. F. (s. f.). <i>Diseño de un procesador asíncrono de 8 bits y su implementación en un dispositivo de lógica programable</i> [Tesis, Pontificia Universidad Javeriana]. <a href="https://doi.org/10.11144/javeriana.10554.15391" target="_blank" rel="noopener">https://doi.org/10.11144/javeriana.10554.15391</a></p>
+            <p>Ortega Lopera, J. (2014). Relatos, mapas conceptuales y arquitectura de computadores. <i>Enseñanza y Aprendizaje de Ingeniería de Computadores</i>. <a href="https://doi.org/10.30827/digibug.32207" target="_blank" rel="noopener">https://doi.org/10.30827/digibug.32207</a></p>
+            <p>Rivas Pérez, M. (2015). Diseño e implementación de un simulador software basado en el procesador MIPS32. <i>Enseñanza y Aprendizaje de Ingeniería de Computadores</i>. <a href="https://doi.org/10.30827/digibug.36571" target="_blank" rel="noopener">https://doi.org/10.30827/digibug.36571</a></p>
+            <p>Villarreal R., P. A. (2017). Visión moderna de los cálculos básicos en una computadora con estructura de Jhon Von Neumann. <i>Ingeniería UVM, 11</i>(1). <a href="https://journal.uvm.edu.ve/index.php/ingenieria/article/view/304" target="_blank" rel="noopener">https://journal.uvm.edu.ve/index.php/ingenieria/article/view/304</a></p>
+        </div>
+    </div>
+</section>
+
+</main>
+</div>
+
+<!-- Barra de progreso y controles de edición (fuera del lienzo 16:9) -->
+<div class="progress" id="progress"></div>
+<div class="edit-hotzone" id="editHotzone"></div>
+<button class="edit-toggle" id="editToggle" title="Modo edición (E)" aria-label="Activar modo edición">✎</button>
+
+<script>
+/* ===========================================
+   CONTROLADOR DE LA PRESENTACIÓN
+   Teclado: ← → espacio, RePág/AvPág, Inicio/Fin
+   También rueda del ratón y deslizar en pantallas táctiles
+   =========================================== */
+class SlidePresentation {
+    constructor() {
+        this.slides = Array.from(document.querySelectorAll('.slide'));
+        this.stage = document.getElementById('deckStage');
+        this.progress = document.getElementById('progress');
+        this.current = 0;
+        this.wheelLock = false;
+        this.numberPages();
+        this.setupStageScale();
+        this.setupKeyboardNav();
+        this.setupTouchNav();
+        this.setupWheelNav();
+        const fromHash = parseInt(location.hash.replace('#', ''), 10);
+        this.showSlide(Number.isFinite(fromHash) ? fromHash - 1 : 0);
+    }
+
+    /* Rellena "04/17" en cada diapositiva */
+    numberPages() {
+        const total = String(this.slides.length).padStart(2, '0');
+        this.slides.forEach((s, i) => {
+            const pg = s.querySelector('.pg');
+            if (pg) pg.textContent = `${String(i + 1).padStart(2, '0')}/${total}`;
+        });
+    }
+
+    /* Escala el lienzo 1920×1080 completo para que quepa en la ventana */
+    setupStageScale() {
+        const scale = () => {
+            const k = Math.min(window.innerWidth / 1920, window.innerHeight / 1080);
+            const x = (window.innerWidth - 1920 * k) / 2;
+            const y = (window.innerHeight - 1080 * k) / 2;
+            this.stage.style.transform = `translate(${x}px, ${y}px) scale(${k})`;
+        };
+        scale();
+        window.addEventListener('resize', scale);
+    }
+
+    setupKeyboardNav() {
+        document.addEventListener('keydown', (e) => {
+            if (document.body.classList.contains('editing')) return;
+            if (['ArrowRight', 'ArrowDown', ' ', 'PageDown', 'Enter'].includes(e.key)) { e.preventDefault(); this.showSlide(this.current + 1); }
+            else if (['ArrowLeft', 'ArrowUp', 'PageUp', 'Backspace'].includes(e.key)) { e.preventDefault(); this.showSlide(this.current - 1); }
+            else if (e.key === 'Home') this.showSlide(0);
+            else if (e.key === 'End') this.showSlide(this.slides.length - 1);
+        });
+    }
+
+    setupTouchNav() {
+        let x0 = null;
+        document.addEventListener('touchstart', (e) => { x0 = e.touches[0].clientX; }, { passive: true });
+        document.addEventListener('touchend', (e) => {
+            if (x0 === null) return;
+            const dx = e.changedTouches[0].clientX - x0;
+            if (Math.abs(dx) > 50) this.showSlide(this.current + (dx < 0 ? 1 : -1));
+            x0 = null;
+        });
+    }
+
+    setupWheelNav() {
+        document.addEventListener('wheel', (e) => {
+            if (this.wheelLock || Math.abs(e.deltaY) < 30) return;
+            this.wheelLock = true;
+            this.showSlide(this.current + (e.deltaY > 0 ? 1 : -1));
+            setTimeout(() => { this.wheelLock = false; }, 700);
+        }, { passive: true });
+    }
+
+    showSlide(index) {
+        this.current = Math.max(0, Math.min(index, this.slides.length - 1));
+        this.slides.forEach((s, i) => {
+            const on = i === this.current;
+            s.classList.toggle('active', on);
+            s.classList.toggle('visible', on);
+        });
+        this.progress.style.width = `${((this.current + 1) / this.slides.length) * 100}%`;
+        history.replaceState(null, '', `#${this.current + 1}`);
+    }
+}
+
+/* ===========================================
+   EDICIÓN EN EL NAVEGADOR
+   Pulsa E (o pasa el ratón por la esquina superior izquierda),
+   haz clic en cualquier texto marcado y edítalo.
+   Ctrl+S descarga el HTML con los cambios.
+   =========================================== */
+class InlineEditor {
+    constructor() {
+        this.isActive = false;
+        this.key = 'arq-comp-edits-v1';
+        this.items = Array.from(document.querySelectorAll('[data-edit]'));
+        this.restore();
+    }
+    toggleEditMode() {
+        this.isActive = !this.isActive;
+        document.body.classList.toggle('editing', this.isActive);
+        document.getElementById('editToggle').classList.toggle('active', this.isActive);
+        this.items.forEach(el => el.setAttribute('contenteditable', this.isActive ? 'true' : 'false'));
+        if (!this.isActive) this.save();
+    }
+    save() {
+        try { localStorage.setItem(this.key, JSON.stringify(this.items.map(el => el.innerHTML))); } catch (e) {}
+    }
+    restore() {
+        try {
+            const saved = JSON.parse(localStorage.getItem(this.key) || 'null');
+            if (Array.isArray(saved) && saved.length === this.items.length) this.items.forEach((el, i) => { el.innerHTML = saved[i]; });
+        } catch (e) {}
+    }
+    download() {
+        this.items.forEach(el => el.removeAttribute('contenteditable'));
+        const html = '<!DOCTYPE html>\n' + document.documentElement.outerHTML;
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(new Blob([html], { type: 'text/html' }));
+        a.download = 'arquitectura-del-computador.html';
+        a.click();
+    }
+}
+
+const deck = new SlidePresentation();
+const editor = new InlineEditor();
+const toggle = document.getElementById('editToggle');
+const hotzone = document.getElementById('editHotzone');
+let hideTimeout = null;
+toggle.addEventListener('click', () => editor.toggleEditMode());
+hotzone.addEventListener('click', () => editor.toggleEditMode());
+hotzone.addEventListener('mouseenter', () => { clearTimeout(hideTimeout); toggle.classList.add('show'); });
+hotzone.addEventListener('mouseleave', () => { hideTimeout = setTimeout(() => { if (!editor.isActive) toggle.classList.remove('show'); }, 400); });
+toggle.addEventListener('mouseenter', () => clearTimeout(hideTimeout));
+toggle.addEventListener('mouseleave', () => { hideTimeout = setTimeout(() => { if (!editor.isActive) toggle.classList.remove('show'); }, 400); });
+document.addEventListener('keydown', (e) => {
+    const inText = e.target.getAttribute && e.target.getAttribute('contenteditable') === 'true';
+    if ((e.key === 'e' || e.key === 'E') && !inText) editor.toggleEditMode();
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); editor.save(); editor.download(); }
+});
+</script>
+</body>
+</html>
